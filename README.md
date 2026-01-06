@@ -55,3 +55,52 @@ After setting the variable, you can run the deployment with the Sepolia network:
 ```shell
 npx hardhat ignition deploy --network sepolia ignition/modules/Counter.ts
 ```
+
+
+Pentru implementarea de frontend:
+Pasi:
+1. pornire blockchain local : npx hardhat node
+2. in alt terminal, deploy la contracte:   npx hardhat run scripts/deploy.ts --network localhost
+3. in alt terminal, pornire frontend: cd frontend + alta comanda: npm run dev
+4. deschide aplicatia in browser: http://localhost:5173
+5. deschide metamask si selecteaza reteaua hardhat local (default url: 127.0.0.1:8545, chainId: 31337, currency: ETH)
+6. importa un cont in metamask folosind private key-ul account 0 afisat in terminalul cu hardhat (apasam sus pe account, buton add wallet, buton import an  account, paste private key)
+7. in browser, apasa connect metamask si confirma conexiunea (daca nu se deschide automat fereastra de metamask, apasam pe extensia de metamask si o sa apare un buton pentru confirmare)
+8. dupa conectare, aplicatia e gata de testare cu creere de plan/subscribe/pay etc
+
+Cum s a facut conexiunea cu metamask? 
+In fisieru App.jsx in functia connectWallet exista un:
+if (!window.ethereum) {
+  alert("Instalează MetaMask.");
+  return;
+} care verifica daca extensia exista in browser, si daca nu arunca alerta. 
+
+Tot in functia connectWallet, frontend-ul cere permisiunea Metamask-ului  
+await window.ethereum.request({
+  method: "eth_requestAccounts"
+});
+Asta trimite o cerere metamaskului, metamask deschide popup, userul apasa confirm, metamask returneaza adresa wallet-ului.
+
+Iar aici frontend-ul se leaga de MetaMask:
+const provider = new ethers.BrowserProvider(window.ethereum);
+BrowserProvider=adaptor intre frontend si Metamask
+ii spunem lui ethers "foloseste metamask ca provider de blockchain"
+
+Aici se ia adresa wallet-ului:
+const signer = await provider.getSigner();
+const address = await signer.getAddress();
+signer=wallet-ul selectat in MetaMask (poate semna trazanactii, poate trimite ETH)
+
+Aici se salveaza conexiunea in UI:
+setSigner(signer);
+setUserAddress(address);
+=salveaza wallet-ul in react, UI-ul stie acum cine e conectat, de aici se activeaza butoanele
+
+
+De ce merg butoanele de Create Plan/Subcribe doar dupa conexiunea cu MetaMask?
+new ethers.Contract(address, abi, signer)
+FARA signer poti doar citi, nu poti trimite tranzactii.
+Dupa connect: signer exista, MetaMask poate semna tranzactii, apare popul de Metamask la Subcribe/Pay etc.
+
+
+
