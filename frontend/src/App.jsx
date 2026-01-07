@@ -14,10 +14,11 @@ export default function App() {
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [txStatus, setTxStatus] = useState("");
 
-  const [newPlanName, setNewPlanName] = useState("Basic Plan");
-  const [newPlanPriceEth, setNewPlanPriceEth] = useState("0.01");
-  const [newPlanIntervalSec, setNewPlanIntervalSec] = useState("60");
-
+  //create plan form with placeholder
+  const [newPlanName, setNewPlanName] = useState("");
+  const [newPlanPriceEth, setNewPlanPriceEth] = useState("");
+  const [newPlanIntervalSec, setNewPlanIntervalSec] = useState("");
+  const [copied, setCopied] = useState(false);
 
   const planRegistry = useMemo(() => {
     if (!signer) return null;
@@ -37,20 +38,34 @@ export default function App() {
     );
   }, [signer]);
 
+  // function for connecting the wallet from metamask
   async function connectWallet() {
-    if (!window.ethereum) return alert("Instalează MetaMask.");
+    try{
+      if (!window.ethereum) return alert("MetaMask not detected.Install.");
 
-    const provider = new ethers.BrowserProvider(window.ethereum);
-    await provider.send("eth_requestAccounts", []);
-    const s = await provider.getSigner();
-    const addr = await s.getAddress();
-    const net = await provider.getNetwork();
-
-    setSigner(s);
-    setUserAddress(addr);
-    setNetworkInfo({ chainId: Number(net.chainId), name: net.name });
+      //check for permission from MetaMask to connect
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      await provider.send("eth_requestAccounts", []);
+      //get the wallet address, where signer=the selected wallet in metamask
+      const s = await provider.getSigner();
+      const addr = await s.getAddress();
+      const net = await provider.getNetwork();
+      //save the connectiun in the UI
+      setSigner(s);
+      setUserAddress(addr);
+      setNetworkInfo({ chainId: Number(net.chainId), name: net.name });
+    } catch (e){
+      const code = e?.code ?? e?.error?.code;
+      if (code==-32002){
+        alert("A MetaMask request is already pending. Open MetaMask and approve/reject it, then try again");
+        return;
+      }
+      console.error(e);
+      alert(e?.shortMessage || e?.message || "failed to connect wallet");
+    
+    }
   }
-
+  //read plans
   async function loadPlans() {
     if (!planRegistry) return;
     setLoadingPlans(true);
@@ -78,12 +93,12 @@ export default function App() {
       setPlans(loaded);
     } catch (e) {
       console.error(e);
-      alert("Nu pot citi planurile. Verifică ABI/adrese + hardhat node pornit.");
+      alert("Could not read plans. Check ABI/adresses and make sure hardhat node is running");
     } finally {
       setLoadingPlans(false);
     }
   }
-
+  //subscription status
   async function refreshSubscription(planId) {
     if (!subMgr || !userAddress) return;
 
@@ -97,75 +112,82 @@ export default function App() {
       prev.map((p) => (p.planId === planId ? { ...p, subscription } : p))
     );
   }
-
+  //actions for plan
   async function subscribe(plan) {
     if (!subMgr) return;
-    setTxStatus("Subscribe... confirmă în MetaMask");
+    setTxStatus("Subscribing... confirm in MetaMask");
 
     try {
       const tx = await subMgr.subscribe(plan.planId, { value: plan.priceWei });
-      setTxStatus("Tranzacție trimisă, aștept confirmarea...");
+      setTxStatus("Transaction sent. Waiting for confirmation...");
       await tx.wait();
-      setTxStatus("Subscribed ✅");
+      setTxStatus("Subscribed succesfully");
       await refreshSubscription(plan.planId);
     } catch (e) {
       console.error(e);
       setTxStatus("");
-      alert(e?.shortMessage || e?.message || "Eroare la subscribe");
+      alert(e?.shortMessage || e?.message || "Subscribed failed");
     }
   }
 
   async function pay(plan) {
     if (!subMgr) return;
-    setTxStatus("Pay... confirmă în MetaMask");
+    setTxStatus("Paying... confirm in MetaMask");
 
     try {
       const tx = await subMgr.pay(plan.planId, { value: plan.priceWei });
-      setTxStatus("Tranzacție trimisă, aștept confirmarea...");
+      setTxStatus("Tranzaction sent. Waitinf fotr confirmation...");
       await tx.wait();
-      setTxStatus("Payment ✅");
+      setTxStatus("Payment successful");
       await refreshSubscription(plan.planId);
     } catch (e) {
       console.error(e);
       setTxStatus("");
-      alert(e?.shortMessage || e?.message || "Eroare la pay (posibil Too early)");
+      alert(e?.shortMessage || e?.message || "Pay failed (maybe too early)");
     }
   }
 
   async function cancel(plan) {
     if (!subMgr) return;
-    setTxStatus("Cancel... confirmă în MetaMask");
+    setTxStatus("Cancelling... confirm  in Metamask");
 
     try {
       const tx = await subMgr.cancel(plan.planId);
-      setTxStatus("Tranzacție trimisă, aștept confirmarea...");
+      setTxStatus("Tranzaction sent. Waiting fpr confirmation...");
       await tx.wait();
-      setTxStatus("Cancelled ✅");
+      setTxStatus("Cancelled successfully");
       await refreshSubscription(plan.planId);
     } catch (e) {
       console.error(e);
       setTxStatus("");
-      alert(e?.shortMessage || e?.message || "Eroare la cancel");
+      alert(e?.shortMessage || e?.message || "Cancel failed");
     }
   }
   async function createPlan() {
   if (!planRegistry) return;
-  setTxStatus("Create plan... confirmă în MetaMask");
+  setTxStatus("Creating plan.. confirm in MetaMask");
 
   try {
-    const priceWei = ethers.parseEther(newPlanPriceEth);
-    const interval = BigInt(newPlanIntervalSec);
+    const name = (newPlanName || "Basic Plan").trim();
+    const priceEth = (newPlanPriceEth || "0.01").trim();
+    const intervalStr = (newPlanIntervalSec || "60").trim();
 
-    const tx = await planRegistry.createPlan(newPlanName, priceWei, interval);
-    setTxStatus("Tranzacție trimisă, aștept confirmarea...");
+    const priceWei = ethers.parseEther(priceEth);
+    const interval = BigInt(intervalStr);
+
+    const tx = await planRegistry.createPlan(name, priceWei, interval);
+    setTxStatus("Tranzaction sent. Waiting for connection...");
     await tx.wait();
 
-    setTxStatus("Plan creat ✅");
+    setTxStatus("Plan created");
+    setNewPlanName("");
+    setNewPlanPriceEth("");
+    setNewPlanIntervalSec("");
     await loadPlans();
   } catch (e) {
     console.error(e);
     setTxStatus("");
-    alert(e?.shortMessage || e?.message || "Eroare la createPlan");
+    alert(e?.shortMessage || e?.message || "Create plan failed");
   }
 }
 
@@ -178,132 +200,493 @@ export default function App() {
     if (!ts || ts === 0) return "-";
     return new Date(ts * 1000).toLocaleString();
   }
+  function shortAddr(a){
+    if (!a) return "";
+    return a.slice(0,6) + "..." + a.slice(-4);
+  }
+  async function copyToClipboard(text){
+    try{
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 900);
+    }catch{
+      //ignore
+    }
+  }
 
   useEffect(() => {
     if (planRegistry) loadPlans();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planRegistry]);
 
-  return (
-    <div style={{ fontFamily: "system-ui", padding: 16, maxWidth: 900, margin: "0 auto" }}>
-      <h2>ChainFlow – Frontend (Hardhat local)</h2>
+  //styling for the frontendddd
+  const S ={
+    page: {
+      minHeight: "100vh",
+      width: "100%",
+      overflowX: "hidden",
+      background:
+        "radial-gradient(1200px 600px at 10% 10%, rgba(124,58,237,0.35), transparent 60%)," +
+        "radial-gradient(1000px 600px at 90% 20%, rgba(59,130,246,0.28), transparent 60%)," +
+        "radial-gradient(900px 500px at 50% 95%, rgba(236,72,153,0.18), transparent 60%)," +
+        "linear-gradient(180deg, #0B0D1A 0%, #090A14 100%)",
+      color: "#EAEAF2",
+      fontFamily:
+        "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial",
+      padding: 20,
+    },
+    container: {
+      maxWidth: 1150,
+      margin: "0 auto",
+      position: "relative",
+      padding: "0 12px",
+    },
+    glowGrid: {
+      position: "absolute",
+      inset: -30,
+      pointerEvents: "none",
+      backgroundImage: 
+        "linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)",
+      backgroundSize: "44px 44px",
+      maskImage: 
+        "radial-gradient(closest-side at 50% 25%, rgba(0,0,0,1), rgba(0,0,0,0))",
+      opacity: 0.55,
+      filter: "blur(0.2px)",
+    },
+    hero: {
+      display: "grid",
+      gap: 14,
+      padding: 22,
+      borderRadius: 18,
+      border: "1px solid rgba(255, 255, 255, 0.10)",
+      background:
+        "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03))",
+      boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+      backdropFilter: "blur(8px)",
+      position: "relative",
+      overflow: "hidden",
 
-      {!userAddress ? (
-        <button onClick={connectWallet}>Connect MetaMask</button>
-      ) : (
-        <div style={{ marginBottom: 12 }}>
-          <div><b>Wallet:</b> {userAddress}</div>
-          <div><b>Network:</b> {networkInfo?.name} (chainId {networkInfo?.chainId})</div>
-          {networkInfo?.chainId !== 31337 && (
-            <div style={{ color: "crimson" }}>
-              Schimbă rețeaua în MetaMask pe hardhat-local (chainId 31337).
+    },
+    heroFree: {
+      paddingTop: 34,
+      paddingBottom: 22,
+      textAlign: "center",
+      display: "grid",
+      gap: 14,
+      justifyItems: "center",
+    },
+    titleWrap: {
+      display: "grid",
+      gap: 10,
+      justifyItems: "center",
+      textAlign: "center",
+    },
+
+    title: {
+      fontSize: 52,
+      fontWeight: 900,
+      letterSpacing: -0.8,
+      margin: 0,
+      lineHeight: 1.02,
+
+      color: "transparent",
+      backgroundImage:
+        "linear-gradient(90deg, rgba(168,85,247,1), rgba(59,130,246,1), rgba(236,72,153,1), rgba(168,85,247,1))",
+      backgroundSize: "220% 100%",
+      backgroundClip: "text",
+      WebkitBackgroundClip: "text",
+
+      animation: "cf_titleIn 700ms cubic-bezier(.22,.61,.36,1) both, cf_shimmer 6s linear infinite",
+    },
+
+    subtitle: {
+      margin: 0,
+      opacity: 0.85,
+      maxwidth: 720,
+      lineHeight: 1.5,
+
+    },
+    
+    row: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center", justifyContent: "center"},
+    btnPrimary: {
+      border: "0",
+      padding: "10px 14px",
+      borderRadius: 12,
+      cursor: "pointer",
+      fontWeight: 700,
+      color: "white",
+      background: 
+        "linear-gradient(90deg, rgba(124,58,237,1), rgba(59,130,246,1))",
+      boxShadow: "0 10px 24px rgba(59, 130, 246, 0.25)",
+      transition: "transform 120ms ease, filter 120ms ease",
+    },
+    btnSecondary: {
+      border: "1px solid rgba(255,255,255,0.14)",
+      padding: "10px 14px",
+      borderRadius: 12,
+      cursor: "pointer",
+      fontWeight: 700,
+      color: "#EAEAF2",
+      background: "rgba(255,255,255,0.04)",
+      transition: "transform 120ms ease, filter 120ms ease",
+    },
+    btnDisabled: {opacity: 0.45, cursor: "not-allowed"},
+    status:{
+      marginTop: 10,
+      padding: 12,
+      borderRadius:14,
+      border: "1px solid rgba(255,255,255,0.10)",
+      background: "rgba(0,0,0,0.25)",
+    },
+    grid: {display:"grid", gap: 12, marginTop: 14},
+    card: {
+      borderRadius:18,
+      border: "1px solid rgba(255,255,255,0.10)",
+      background:
+        "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.03))",
+      boxShadow: "0 16px 40px rgba(0,0,0,0.45)",
+      padding:16,
+      position:"relative",
+      overflow: "hidden",
+    },
+    cardGlow: {
+      position: "absolute",
+      inset: -2,
+      background:
+        "radial-gradient(400px 200px at 10% 10%, rgba(124,58,237,0.25), transparent 60%)," +
+        "radial-gradient(350px 200px at 90% 30%, rgba(59,130,246,0.22), transparent 60%)",
+      pointerEvents: "none",
+      opacity: 0.9,
+    },
+    cardTop: {
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 12,
+      flexWrap: "wrap",
+      position: "relative",
+    },
+    cardTitle: { fontSize: 18, fontWeight: 800, marginBottom: 6 },
+    mono: { fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas" },
+    label: { fontSize: 12, opacity: 0.75, marginBottom: 6 },
+    input: {
+      width: "100%",
+      padding: "10px 12px",
+      borderRadius: 12,
+      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(0,0,0,0.25)",
+      color: "#EAEAF2",
+      outline: "none",
+    },
+    formGrid: { display: "grid", gap: 10, maxWidth: 520 },
+    divider: {
+      height: 1,
+      background: "rgba(255,255,255,0.10)",
+      margin: "12px 0",
+    },
+    hint: { fontSize: 12, opacity: 0.75, marginTop: 8 },
+    pill: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "8px 10px",
+      borderRadius: 999,
+      border: "1px solid rgba(255,255,255,0.14)",
+      background: "rgba(0,0,0,0.18)",
+    },
+  };
+  return (
+    <div style={S.page}>
+      <style>{`
+        html, body, #root {
+          width: 100%;
+          max-width: 100%;
+          margin: 0;
+          padding: 0;
+          overflow-x: hidden;
+          background: #090A14;
+        }
+        * { box-sizing: border-box; }
+        @keyframes cf_titleIn {
+          from { opacity: 0; transform: translateY(10px); filter: blur(2px); }
+          to   { opacity: 1; transform: translateY(0);   filter: blur(0); }
+        }
+
+        @keyframes cf_shimmer {
+          0%   { background-position: 0% 50%; }
+          50%  { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+      `}</style>
+
+      <div style={S.container}>
+        <div style={S.glowGrid} />
+
+        <div style={S.heroFree}>
+          <div style={S.titleWrap}>
+            <div>
+              <h1 style={S.title}>ChainFlow</h1>
+
+              <p style={S.subtitle}>
+                On-chain subscriptions with recurring payments. Connect your
+                wallet, create a plan, subscribe, pay, and cancel — all on a
+                local Hardhat network.
+              </p>
+            </div>
+
+          </div>
+
+          {!userAddress ? (
+            <div style={S.row}>
+              <button
+                style={S.btnPrimary}
+                onClick={connectWallet}
+                onMouseDown={(e) => (e.currentTarget.style.transform = "scale(0.98)")}
+                onMouseUp={(e) => (e.currentTarget.style.transform = "scale(1)")}
+              >
+                Connect MetaMask
+              </button>
+
+              <span style={{ opacity: 0.75, fontSize: 13 }}>
+                Make sure MetaMask is on chainId 31337 (Hardhat local).
+              </span>
+            </div>
+          ) : (
+            <div style={S.row}>
+              <div style={S.pill}>
+                <span style={{ opacity: 0.8 }}>Wallet</span>
+                <span style={{ fontWeight: 800 }}>
+                  {shortAddr(userAddress)}
+                </span>
+                <button
+                  style={{
+                    ...S.btnSecondary,
+                    padding: "6px 10px",
+                    borderRadius: 10,
+                    fontSize: 12,
+                  }}
+                  onClick={() => copyToClipboard(userAddress)}
+                >
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+
+              <div style={S.pill}>
+                <span style={{ opacity: 0.8 }}>Network</span>
+                <span style={{ fontWeight: 800 }}>
+                  {networkInfo?.name || "unknown"} (chainId {networkInfo?.chainId})
+                </span>
+              </div>
+
+              {networkInfo?.chainId !== 31337 && (
+                <div style={{ color: "#FCA5A5", fontWeight: 700 }}>
+                  Wrong network. Switch MetaMask to Hardhat local (31337).
+                </div>
+              )}
             </div>
           )}
-        </div>
-      )}
-        <div style={{ border: "1px solid #333", borderRadius: 12, padding: 12, margin: "12px 0" }}>
-          <h3 style={{ marginTop: 0 }}>Create plan (merchant)</h3>
 
-          <div style={{ display: "grid", gap: 8, maxWidth: 420 }}>
-            <label>
-              Name
-              <input
-                value={newPlanName}
-                onChange={(e) => setNewPlanName(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
-            </label>
-
-            <label>
-              Price (ETH)
-              <input
-                value={newPlanPriceEth}
-                onChange={(e) => setNewPlanPriceEth(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
-            </label>
-
-            <label>
-              Interval (sec)
-              <input
-                value={newPlanIntervalSec}
-                onChange={(e) => setNewPlanIntervalSec(e.target.value)}
-                style={{ width: "100%", padding: 8, marginTop: 4 }}
-              />
-            </label>
-
-            <button onClick={createPlan} disabled={!planRegistry || !userAddress}>
-              Create Plan
-            </button>
-          </div>
-
-          <div style={{ marginTop: 8, fontSize: 12, opacity: 0.85 }}>
-            Tip: planurile pot fi create doar de merchant (în demo folosiți Account #0).
-          </div>
+          {txStatus && <div style={S.status}>{txStatus}</div>}
         </div>
 
-      <div style={{ margin: "12px 0" }}>
-        <button onClick={loadPlans} disabled={!planRegistry || loadingPlans}>
-          {loadingPlans ? "Loading..." : "Reload plans"}
-        </button>
-      </div>
+        {/* Create Plan */}
+        <div style={{ ...S.card, marginTop: 14 }}>
+          <div style={S.cardGlow} />
+          <div style={{ position: "relative" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontSize: 18, fontWeight: 900 }}>Create Plan</div>
+                <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
+                  Use Account #0 (merchant) for creating plans.
+                </div>
+              </div>
 
-      {txStatus && <div style={{ padding: 10, background: "#f3f3f3", marginBottom: 12 }}>{txStatus}</div>}
+              <div style={S.row}>
+                <button
+                  style={{
+                    ...S.btnSecondary,
+                    ...( !planRegistry || loadingPlans ? S.btnDisabled : null ),
+                  }}
+                  onClick={loadPlans}
+                  disabled={!planRegistry || loadingPlans}
+                >
+                  {loadingPlans ? "Loading..." : "Reload plans"}
+                </button>
+              </div>
+            </div>
 
-      {plans.length === 0 ? (
-        <div>
-          <p><b>Nu există planuri încă.</b></p>
-          <p>
-            Asta e normal: deploy-ul vostru nu creează planuri.
-            Următorul pas e să creăm 1 plan (prin script sau prin UI).
-          </p>
-        </div>
-      ) : (
-        <div style={{ display: "grid", gap: 12 }}>
-          {plans.map((p) => (
-            <div key={p.planId} style={{ border: "1px solid #ddd", borderRadius: 12, padding: 12 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={S.divider} />
+
+            <div style={S.formGrid}>
+              <div>
+                <div style={S.label}>Plan name</div>
+                <input
+                  style={S.input}
+                  placeholder="Basic Plan"
+                  value={newPlanName}
+                  onChange={(e) => setNewPlanName(e.target.value)}
+                />
+              </div>
+
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 700 }}>
-                    #{p.planId} – {p.name}
-                  </div>
-                  <div><b>Price:</b> {fmtEth(p.priceWei)} ETH</div>
-                  <div><b>Interval:</b> {p.intervalSec} sec</div>
-                  <div><b>Merchant:</b> {p.merchant}</div>
-                  <div><b>Active plan:</b> {String(p.active)}</div>
+                  <div style={S.label}>Price (ETH)</div>
+                  <input
+                    style={S.input}
+                    placeholder="0.01"
+                    value={newPlanPriceEth}
+                    onChange={(e) => setNewPlanPriceEth(e.target.value)}
+                  />
                 </div>
 
-                <div style={{ minWidth: 280 }}>
-                  <button onClick={() => refreshSubscription(p.planId)} disabled={!subMgr || !userAddress}>
-                    Refresh subscription
-                  </button>
+                <div>
+                  <div style={S.label}>Interval (sec)</div>
+                  <input
+                    style={S.input}
+                    placeholder="60"
+                    value={newPlanIntervalSec}
+                    onChange={(e) => setNewPlanIntervalSec(e.target.value)}
+                  />
+                </div>
+              </div>
 
-                  <div style={{ marginTop: 8 }}>
-                    <div><b>Subscribed:</b> {p.subscription ? String(p.subscription.active) : "(unknown)"}</div>
-                    <div><b>Next payment at:</b> {p.subscription ? fmtTime(p.subscription.nextPaymentAt) : "(unknown)"}</div>
+              <button
+                style={{
+                  ...S.btnPrimary,
+                  ...( !planRegistry || !userAddress ? S.btnDisabled : null ),
+                }}
+                onClick={createPlan}
+                disabled={!planRegistry || !userAddress}
+              >
+                Create plan
+              </button>
+
+              <div style={S.hint}>
+                Tip: If you restart <span style={S.mono}>npx hardhat node</span>, you must redeploy contracts and plans will reset.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Plans */}
+        {plans.length === 0 ? (
+          <div style={{ ...S.card, marginTop: 14 }}>
+            <div style={S.cardGlow} />
+            <div style={{ position: "relative" }}>
+              <div style={{ fontSize: 18, fontWeight: 900 }}>No plans yet</div>
+              <div style={{ opacity: 0.8, marginTop: 6 }}>
+                Create a plan using the form above, then reload.
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={S.grid}>
+            {plans.map((p) => (
+              <div key={p.planId} style={S.card}>
+                <div style={S.cardGlow} />
+                <div style={S.cardTop}>
+                  <div>
+                    <div style={S.cardTitle}>
+                      #{p.planId} — {p.name}
+                    </div>
+
+                    <div style={{ display: "grid", gap: 6, opacity: 0.92 }}>
+                      <div>
+                        <span style={S.label}>Price</span>{" "}
+                        <span style={{ fontWeight: 800 }}>{fmtEth(p.priceWei)} ETH</span>
+                      </div>
+                      <div>
+                        <span style={S.label}>Interval</span>{" "}
+                        <span style={{ fontWeight: 800 }}>{p.intervalSec} sec</span>
+                      </div>
+                      <div>
+                        <span style={S.label}>Merchant</span>{" "}
+                        <span style={{ ...S.mono, opacity: 0.95 }}>{p.merchant}</span>
+                      </div>
+                      <div>
+                        <span style={S.label}>Active</span>{" "}
+                        <span style={{ fontWeight: 800 }}>{String(p.active)}</span>
+                      </div>
+                    </div>
                   </div>
 
-                  <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
-                    <button onClick={() => subscribe(p)} disabled={!subMgr || !userAddress || !p.active}>
-                      Subscribe
+                  <div style={{ minWidth: 320 }}>
+                    <button
+                      style={{
+                        ...S.btnSecondary,
+                        ...( !subMgr || !userAddress ? S.btnDisabled : null ),
+                      }}
+                      onClick={() => refreshSubscription(p.planId)}
+                      disabled={!subMgr || !userAddress}
+                    >
+                      Refresh subscription
                     </button>
-                    <button onClick={() => pay(p)} disabled={!subMgr || !userAddress || !p.active}>
-                      Pay
-                    </button>
-                    <button onClick={() => cancel(p)} disabled={!subMgr || !userAddress}>
-                      Cancel
-                    </button>
-                  </div>
 
-                  <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
-                    Dacă Pay dă „Too early”, e normal (nu a venit scadența).
+                    <div style={{ marginTop: 10, display: "grid", gap: 6 }}>
+                      <div>
+                        <span style={S.label}>Subscribed</span>{" "}
+                        <span style={{ fontWeight: 800 }}>
+                          {p.subscription ? String(p.subscription.active) : "unknown"}
+                        </span>
+                      </div>
+                      <div>
+                        <span style={S.label}>Next payment</span>{" "}
+                        <span style={{ fontWeight: 800 }}>
+                          {p.subscription ? fmtTime(p.subscription.nextPaymentAt) : "unknown"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
+                      <button
+                        style={{
+                          ...S.btnPrimary,
+                          ...( !subMgr || !userAddress || !p.active ? S.btnDisabled : null ),
+                        }}
+                        onClick={() => subscribe(p)}
+                        disabled={!subMgr || !userAddress || !p.active}
+                      >
+                        Subscribe
+                      </button>
+
+                      <button
+                        style={{
+                          ...S.btnSecondary,
+                          ...( !subMgr || !userAddress || !p.active ? S.btnDisabled : null ),
+                        }}
+                        onClick={() => pay(p)}
+                        disabled={!subMgr || !userAddress || !p.active}
+                      >
+                        Pay
+                      </button>
+
+                      <button
+                        style={{
+                          ...S.btnSecondary,
+                          ...( !subMgr || !userAddress ? S.btnDisabled : null ),
+                        }}
+                        onClick={() => cancel(p)}
+                        disabled={!subMgr || !userAddress}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+
+                    <div style={S.hint}>
+                      If Pay fails with “Too early”, it’s normal — the interval hasn’t passed yet.
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+
+        <div style={{ opacity: 0.55, fontSize: 12, marginTop: 18 }}>
+          ChainFlow UI (local). Addresses:{" "}
+          <span style={S.mono}>{PLAN_REGISTRY_ADDRESS}</span>{" "}
+          · <span style={S.mono}>{SUB_MANAGER_ADDRESS}</span>
         </div>
-      )}
+      </div>
     </div>
   );
 }
