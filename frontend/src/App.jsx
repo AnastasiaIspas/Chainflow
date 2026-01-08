@@ -237,6 +237,7 @@ export default function App() {
     },
     container: {
       maxWidth: 1150,
+      width: "100%",
       margin: "0 auto",
       position: "relative",
       padding: "0 12px",
@@ -383,7 +384,6 @@ export default function App() {
       background: "rgba(255,255,255,0.10)",
       margin: "12px 0",
     },
-    hint: { fontSize: 12, opacity: 0.75, marginTop: 8 },
     pill: {
       display: "inline-flex",
       alignItems: "center",
@@ -447,7 +447,7 @@ export default function App() {
               </button>
 
               <span style={{ opacity: 0.75, fontSize: 13 }}>
-                Make sure MetaMask is on chainId 31337 (Hardhat local).
+                Make sure MetaMask is on chainId 31337 (Hardhat local)
               </span>
             </div>
           ) : (
@@ -560,9 +560,6 @@ export default function App() {
                 Create plan
               </button>
 
-              <div style={S.hint}>
-                Tip: If you restart <span style={S.mono}>npx hardhat node</span>, you must redeploy contracts and plans will reset.
-              </div>
             </div>
           </div>
         </div>
@@ -670,10 +667,6 @@ export default function App() {
                         Cancel
                       </button>
                     </div>
-
-                    <div style={S.hint}>
-                      If Pay fails with “Too early”, it’s normal — the interval hasn’t passed yet.
-                    </div>
                   </div>
                 </div>
               </div>
@@ -681,11 +674,6 @@ export default function App() {
           </div>
         )}
 
-        <div style={{ opacity: 0.55, fontSize: 12, marginTop: 18 }}>
-          ChainFlow UI (local). Addresses:{" "}
-          <span style={S.mono}>{PLAN_REGISTRY_ADDRESS}</span>{" "}
-          · <span style={S.mono}>{SUB_MANAGER_ADDRESS}</span>
-        </div>
       </div>
     </div>
   );
