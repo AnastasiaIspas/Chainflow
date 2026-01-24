@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
+import "./Ownable.sol";
+
 interface IPlanRegistry {
     function getPlan(uint256 planId)
         external
@@ -8,8 +10,12 @@ interface IPlanRegistry {
         returns (string memory name, uint256 priceWei, uint256 intervalSec, address merchant, bool active);
 }
 
-contract SubscriptionManager {
+contract SubscriptionManager is Ownable {
     IPlanRegistry public planRegistry;
+    bool public paused;
+
+    // Withdrawal Pattern: merchants accumulate balances here
+    mapping(address => uint256) public pendingWithdrawals;
 
     struct Subscription {
         uint256 nextPaymentAt; 
@@ -23,9 +29,18 @@ contract SubscriptionManager {
     event PaymentExecuted(address indexed user, uint256 indexed planId, uint256 paidAt, uint256 nextPaymentAt, uint256 amountWei);
     event SubscriptionCancelled(address indexed user, uint256 indexed planId);
     event SubscriptionExpired(address indexed user, uint256 indexed planId);
+    event Paused(address indexed by);
+    event Unpaused(address indexed by);
+    event Withdrawn(address indexed merchant, uint256 amount);
 
     constructor(address planRegistryAddress) {
         planRegistry = IPlanRegistry(planRegistryAddress);
+        paused = false;
+    }
+
+    modifier whenNotPaused() {
+        require(!paused, "Contract is paused");
+        _;
     }
 
     modifier validActivePlan(uint256 planId) {
@@ -34,25 +49,32 @@ contract SubscriptionManager {
         _;
     }
 
-    function subscribe(uint256 planId) external payable validActivePlan(planId) {
+    // Pure function: calculates next payment timestamp
+    function calculateNextPayment(uint256 currentTimestamp, uint256 intervalSec) 
+        public pure returns (uint256) 
+    {
+        return currentTimestamp + intervalSec;
+    }
+
+    function subscribe(uint256 planId) external payable validActivePlan(planId) whenNotPaused {
         (, uint256 priceWei, uint256 intervalSec, address merchant, ) = planRegistry.getPlan(planId);
 
         Subscription storage s = subscriptions[msg.sender][planId];
         require(!s.active, "Already subscribed");
         require(msg.value == priceWei, "Wrong amount");
 
-        uint256 nextPay = block.timestamp + intervalSec;
+        uint256 nextPay = calculateNextPayment(block.timestamp, intervalSec);
         s.nextPaymentAt = nextPay;
         s.active = true;
 
-        (bool ok, ) = merchant.call{value: msg.value}("");
-        require(ok, "ETH transfer failed");
+        // Withdrawal Pattern: accumulate funds for merchant
+        pendingWithdrawals[merchant] += msg.value;
 
         emit SubscriptionActivated(msg.sender, planId, nextPay);
         emit PaymentExecuted(msg.sender, planId, block.timestamp, nextPay, msg.value);
     }
 
-    function pay(uint256 planId) external payable validActivePlan(planId) {
+    function pay(uint256 planId) external payable validActivePlan(planId) whenNotPaused {
         (, uint256 priceWei, uint256 intervalSec, address merchant, ) = planRegistry.getPlan(planId);
 
         Subscription storage s = subscriptions[msg.sender][planId];
@@ -61,11 +83,11 @@ contract SubscriptionManager {
         require(msg.value == priceWei, "Wrong amount");
 
         uint256 paidAt = block.timestamp;
-        uint256 nextPay = paidAt + intervalSec;
+        uint256 nextPay = calculateNextPayment(paidAt, intervalSec);
         s.nextPaymentAt = nextPay;
 
-        (bool ok, ) = merchant.call{value: msg.value}("");
-        require(ok, "ETH transfer failed");
+        // Withdrawal Pattern: accumulate funds for merchant
+        pendingWithdrawals[merchant] += msg.value;
 
         emit PaymentExecuted(msg.sender, planId, paidAt, nextPay, msg.value);
     }
@@ -77,8 +99,21 @@ contract SubscriptionManager {
         emit SubscriptionCancelled(msg.sender, planId);
     }
 
+    // Withdrawal Pattern: merchant withdraws their accumulated funds
+    function withdraw() external {
+        uint256 amount = pendingWithdrawals[msg.sender];
+        require(amount > 0, "No funds to withdraw");
+        
+        pendingWithdrawals[msg.sender] = 0;
+        
+        (bool ok, ) = msg.sender.call{value: amount}("");
+        require(ok, "Withdrawal failed");
+        
+        emit Withdrawn(msg.sender, amount);
+    }
+
     function isExpired(address user, uint256 planId) public view returns (bool) {
-        Subscription memory s = subscriptions[user][planId];
+        Subscription storage s = subscriptions[user][planId];
         if (!s.active) return false;
 
         (, , uint256 intervalSec, , ) = planRegistry.getPlan(planId);
@@ -91,5 +126,27 @@ contract SubscriptionManager {
         require(isExpired(msg.sender, planId), "Not expired");
         s.active = false;
         emit SubscriptionExpired(msg.sender, planId);
+    }
+
+    // Admin functions (only owner)
+    function pause() external onlyOwner {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit Unpaused(msg.sender);
+    }
+
+    function setPlanRegistry(address newAddress) external onlyOwner {
+        require(newAddress != address(0), "Invalid address");
+        planRegistry = IPlanRegistry(newAddress);
+    }
+
+    function emergencyWithdraw() external onlyOwner {
+        uint256 balance = address(this).balance;
+        require(balance > 0, "No funds");
+        payable(owner).transfer(balance);
     }
 }
