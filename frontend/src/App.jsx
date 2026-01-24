@@ -14,6 +14,16 @@ export default function App() {
   const [loadingPlans, setLoadingPlans] = useState(false);
   const [txStatus, setTxStatus] = useState("");
 
+  // Owner state
+  const [isOwner, setIsOwner] = useState(false);
+  const [currentOwner, setCurrentOwner] = useState("");
+  const [isPaused, setIsPaused] = useState(false);
+  const [newRegistryAddress, setNewRegistryAddress] = useState("");
+  const [newOwnerAddress, setNewOwnerAddress] = useState("");
+
+  // Merchant withdrawal
+  const [merchantBalance, setMerchantBalance] = useState("0");
+
   //create plan form with placeholder
   const [newPlanName, setNewPlanName] = useState("");
   const [newPlanPriceEth, setNewPlanPriceEth] = useState("");
@@ -381,6 +391,102 @@ export default function App() {
     }
   }
 
+  async function emergencyWithdrawFunds() {
+    if (!subMgr) return;
+    if (!confirm("Are you sure you want to withdraw all contract funds?")) return;
+    
+    setTxStatus("Estimating gas...");
+    
+    try {
+      // Gas estimation
+      let gasEstimate;
+      try {
+        gasEstimate = await subMgr.emergencyWithdraw.estimateGas();
+      } catch (estimateError) {
+        console.error("Gas estimation failed:", estimateError);
+        setTxStatus("");
+        alert("Error: No funds in contract to withdraw!");
+        return;
+      }
+      
+      setTxStatus("Withdrawing funds...");
+      
+      const tx = await subMgr.emergencyWithdraw({ gasLimit: gasEstimate * 120n / 100n });
+      setTxStatus("Transaction sent. Waiting for confirmation...");
+      await tx.wait();
+      setTxStatus("Funds withdrawn");
+      alert("Contract funds withdrawn successfully!");
+    } catch (e) {
+      console.error(e);
+      setTxStatus("");
+      alert(e?.shortMessage || e?.message || "Withdrawal failed");
+    }
+  }
+
+  async function transferOwnership() {
+    if (!subMgr || !newOwnerAddress) return;
+    if (!confirm(`Transfer ownership to ${newOwnerAddress}? This action cannot be undone!`)) return;
+    
+    setTxStatus("Transferring ownership...");
+    
+    try {
+      const tx = await subMgr.transferOwnership(newOwnerAddress);
+      setTxStatus("Transaction sent. Waiting for confirmation...");
+      await tx.wait();
+      setTxStatus("Ownership transferred");
+      setNewOwnerAddress("");
+      setIsOwner(false);
+      alert("Ownership transferred successfully! You are no longer the owner.");
+    } catch (e) {
+      console.error(e);
+      setTxStatus("");
+      alert(e?.shortMessage || e?.message || "Transfer failed");
+    }
+  }
+
+  async function withdrawMerchantFunds() {
+    if (!subMgr) return;
+    
+    setTxStatus("Estimating gas...");
+    
+    try {
+      // Gas estimation
+      let gasEstimate;
+      try {
+        gasEstimate = await subMgr.withdraw.estimateGas();
+      } catch (estimateError) {
+        console.error("Gas estimation failed:", estimateError);
+        setTxStatus("");
+        alert("Error: No funds available to withdraw!");
+        return;
+      }
+      
+      setTxStatus("Withdrawing your funds...");
+      
+      const tx = await subMgr.withdraw({ gasLimit: gasEstimate * 120n / 100n });
+      setTxStatus("Transaction sent. Waiting for confirmation...");
+      await tx.wait();
+      setTxStatus("Funds withdrawn successfully");
+      await checkMerchantBalance();
+      alert("Funds withdrawn to your wallet!");
+    } catch (e) {
+      console.error(e);
+      setTxStatus("");
+      alert(e?.shortMessage || e?.message || "Withdrawal failed");
+    }
+  }
+
+  async function checkMerchantBalance() {
+    if (!subMgr || !userAddress) return;
+    
+    try {
+      const balance = await subMgr.pendingWithdrawals(userAddress);
+      setMerchantBalance(ethers.formatEther(balance));
+    } catch (e) {
+      console.error("Error checking merchant balance:", e);
+    }
+  }
+
   function fmtEth(priceWei) {
     return ethers.formatEther(priceWei);
   }
@@ -408,6 +514,41 @@ export default function App() {
     if (planRegistry) loadPlans();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planRegistry]);
+
+  // Check if current user is owner and get contract status
+  useEffect(() => {
+    async function checkOwnerAndStatus() {
+      if (!subMgr || !userAddress) return;
+      
+      try {
+        const ownerAddress = await subMgr.owner();
+        const pausedStatus = await subMgr.paused();
+        
+        setCurrentOwner(ownerAddress);
+        setIsOwner(ownerAddress.toLowerCase() === userAddress.toLowerCase());
+        setIsPaused(pausedStatus);
+        
+        console.log("Owner check:", {
+          contractOwner: ownerAddress,
+          currentUser: userAddress,
+          isOwner: ownerAddress.toLowerCase() === userAddress.toLowerCase()
+        });
+      } catch (e) {
+        console.error("Error checking owner:", e);
+        setIsOwner(false);
+        setIsPaused(false);
+      }
+      
+      // Check merchant balance separately (don't let it block owner check)
+      try {
+        await checkMerchantBalance();
+      } catch (e) {
+        console.error("Error checking merchant balance:", e);
+      }
+    }
+    
+    checkOwnerAndStatus();
+  }, [subMgr, userAddress]);
 
   // Setup event listeners (only for NEW events, not historical)
   useEffect(() => {
@@ -765,6 +906,15 @@ export default function App() {
                 </span>
               </div>
 
+              {currentOwner && (
+                <div style={{ ...S.pill, background: isOwner ? "rgba(234, 179, 8, 0.15)" : "rgba(59, 130, 246, 0.15)" }}>
+                  <span style={{ opacity: 0.8 }}>Contract Owner</span>
+                  <span style={{ fontWeight: 800, fontSize: 12 }}>
+                    {shortAddr(currentOwner)} {isOwner && "👑"}
+                  </span>
+                </div>
+              )}
+
               {networkInfo?.chainId !== 31337 && (
                 <div style={{ color: "#FCA5A5", fontWeight: 700 }}>
                   Wrong network. Switch MetaMask to Hardhat local (31337).
@@ -776,11 +926,118 @@ export default function App() {
           {txStatus && <div style={S.status}>{txStatus}</div>}
         </div>
 
+        {/* Admin Panel - only for owner */}
+        {isOwner && (
+          <div style={{ ...S.card, marginTop: 14, border: "2px solid rgba(234, 179, 8, 0.3)" }}>
+            <div style={S.cardGlow} />
+            <div style={{ position: "relative" }}>
+              <div style={{ fontSize: 20, fontWeight: 900, marginBottom: 4, display: "flex", alignItems: "center", gap: 8 }}>
+                <span>Admin Panel</span>
+                <span style={{ fontSize: 14, background: "rgba(234, 179, 8, 0.2)", padding: "4px 10px", borderRadius: 8, color: "#eab308" }}>
+                  OWNER
+                </span>
+              </div>
+              <div style={{ opacity: 0.75, marginBottom: 16, fontSize: 13 }}>
+                You have admin privileges for this contract
+              </div>
+
+              <div style={S.divider} />
+
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 12, marginBottom: 16 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, opacity: 0.9 }}>Contract Status</div>
+                  <div style={{ 
+                    padding: 12, 
+                    borderRadius: 12, 
+                    background: isPaused ? "rgba(239, 68, 68, 0.1)" : "rgba(34, 197, 94, 0.1)",
+                    border: `1px solid ${isPaused ? "rgba(239, 68, 68, 0.3)" : "rgba(34, 197, 94, 0.3)"}`,
+                    fontSize: 15,
+                    fontWeight: 700,
+                    color: isPaused ? "#ef4444" : "#22c55e"
+                  }}>
+                    {isPaused ? "PAUSED" : "ACTIVE"}
+                  </div>
+                </div>
+
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, opacity: 0.9 }}>Emergency Controls</div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button
+                      style={{
+                        ...S.btnSecondary,
+                        flex: 1,
+                        background: isPaused ? "rgba(34, 197, 94, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                        borderColor: isPaused ? "rgba(34, 197, 94, 0.3)" : "rgba(239, 68, 68, 0.3)",
+                      }}
+                      onClick={isPaused ? unpauseContract : pauseContract}
+                    >
+                      {isPaused ? "▶️ Unpause" : "⏸️ Pause"}
+                    </button>
+                    <button
+                      style={{ ...S.btnSecondary, flex: 1 }}
+                      onClick={emergencyWithdrawFunds}
+                    >
+                      💰 Withdraw
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, opacity: 0.9 }}>Update PlanRegistry Address</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    style={{ ...S.input, flex: 1 }}
+                    placeholder="0x..."
+                    value={newRegistryAddress}
+                    onChange={(e) => setNewRegistryAddress(e.target.value)}
+                  />
+                  <button
+                    style={{ ...S.btnPrimary, whiteSpace: "nowrap" }}
+                    onClick={changePlanRegistry}
+                    disabled={!newRegistryAddress}
+                  >
+                    Update
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+                <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 8, opacity: 0.9, color: "#eab308" }}>⚠️ Transfer Ownership</div>
+                <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+                  Transfer admin rights to another address. This action is permanent!
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <input
+                    style={{ ...S.input, flex: 1 }}
+                    placeholder="New owner address (0x...)"
+                    value={newOwnerAddress}
+                    onChange={(e) => setNewOwnerAddress(e.target.value)}
+                  />
+                  <button
+                    style={{ 
+                      ...S.btnPrimary, 
+                      whiteSpace: "nowrap",
+                      background: "rgba(234, 179, 8, 0.2)",
+                      borderColor: "rgba(234, 179, 8, 0.3)",
+                      color: "#eab308"
+                    }}
+                    onClick={transferOwnership}
+                    disabled={!newOwnerAddress}
+                  >
+                    Transfer
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Create Plan */}
         <div style={{ ...S.card, marginTop: 14 }}>
           <div style={S.cardGlow} />
           <div style={{ position: "relative" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 16 }}>
               <div>
                 <div style={{ fontSize: 18, fontWeight: 900 }}>Create Plan</div>
                 <div style={{ opacity: 0.75, marginTop: 4, fontSize: 13 }}>
@@ -801,6 +1058,38 @@ export default function App() {
                 </button>
               </div>
             </div>
+
+            {/* Merchant Withdrawal */}
+            {parseFloat(merchantBalance) > 0 && (
+              <div style={{ 
+                marginBottom: 16, 
+                padding: 12, 
+                background: "rgba(34, 197, 94, 0.1)", 
+                border: "1px solid rgba(34, 197, 94, 0.3)",
+                borderRadius: 12
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: "#22c55e" }}>💰 Pending Withdrawals</div>
+                    <div style={{ fontSize: 20, fontWeight: 900, marginTop: 4 }}>{merchantBalance} ETH</div>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
+                      Funds from your subscriptions ready to withdraw
+                    </div>
+                  </div>
+                  <button
+                    style={{
+                      ...S.btnPrimary,
+                      background: "rgba(34, 197, 94, 0.2)",
+                      borderColor: "rgba(34, 197, 94, 0.4)",
+                      color: "#22c55e"
+                    }}
+                    onClick={withdrawMerchantFunds}
+                  >
+                    Withdraw
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={S.divider} />
 
