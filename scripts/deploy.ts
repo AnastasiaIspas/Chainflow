@@ -1,8 +1,8 @@
-import hre from "hardhat";
+import hre from "hardhat"; // hardhat runtime environment
 
 async function main() {
-  const connection = await hre.network.connect();
-  const { ethers } = connection;
+  const connection = await hre.network.connect(); // conectare explicita la reteaua hardhat
+  const { ethers } = connection; // extragere ethers din conexiune
 
   const PlanRegistry = await ethers.getContractFactory("PlanRegistry");
   const planRegistry = await PlanRegistry.deploy();
