@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
-
 import "./Ownable.sol";
 
 interface IPlanRegistry {
@@ -49,7 +48,7 @@ contract SubscriptionManager is Ownable {
         _;
     }
 
-    // Pure function: calculates next payment timestamp
+    // calculates next payment timestamp
     function calculateNextPayment(uint256 currentTimestamp, uint256 intervalSec) 
         public pure returns (uint256) 
     {
